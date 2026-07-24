@@ -1,0 +1,130 @@
+services:
+  postgres:
+    image: percona/percona-distribution-postgresql:18.4
+    container_name: postgres
+    hostname: postgres
+
+    restart: unless-stopped
+    stop_grace_period: 5m
+    shm_size: 8gb
+
+    ports:
+      - "5432:5432"
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+      PGDATA: /var/lib/postgresql/data
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    volumes:
+      - ./data:/var/lib/postgresql/data:rw
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ./conf:/etc/postgresql:ro
+      - ./logs:/var/log/postgresql:rw
+      - ./wal-archive:/wal_archive:rw
+      - ./pgbackrest-spool:/var/lib/pgbackrest/spool:rw
+
+    networks:
+      - postgres-network
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  pgbackrest:
+    image: percona/percona-distribution-postgresql:18.4
+    container_name: pgbackrest
+
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "pgbackrest", "info"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+    volumes:
+      - ./data:/var/lib/postgresql/data:ro
+      - ./backup.sh:/backup.sh:ro
+      - ./conf:/etc/postgresql:ro
+      - ./logs:/var/log/postgresql
+      - ./wal-archive:/wal_archive
+      - ./pgbackrest-spool:/var/lib/pgbackrest/spool
+
+    entrypoint:
+      - /bin/bash
+      - /backup.sh
+
+    networks:
+      - postgres-network
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  pmm-client:
+    image: percona/pmm-client:3.8.0
+    container_name: pmm-client
+    hostname: postgres-node
+
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    environment:
+      # PMM Client will automatically use these to connect on boot
+      - PMM_AGENT_SERVER_ADDRESS=${PMM_SERVER_IP}
+      - PMM_AGENT_SERVER_USERNAME=${PMM_SERVER_USER}
+      - PMM_AGENT_SERVER_PASSWORD=${PMM_SERVER_PASSWORD}
+      - PMM_AGENT_SERVER_INSECURE_TLS=1
+      - PMM_AGENT_SETUP=1
+      - PMM_AGENT_CONFIG_FILE=/srv/pmm-agent.yaml
+
+    volumes:
+      - /:/host:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./pmm-client:/srv:rw
+
+    networks:
+      - postgres-network
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+networks:
+  postgres-network:
+    driver: bridge
