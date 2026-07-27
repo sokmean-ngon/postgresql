@@ -69,6 +69,7 @@ DIRS=(
     pgbackrest-spool
     pmm-client
     scripts
+    runtime
 )
 
 for dir in "${DIRS[@]}"; do
@@ -91,10 +92,11 @@ chown -R "${POSTGRES_UID}:${POSTGRES_GID}" \
     "${BASE_DIR}/data" \
     "${BASE_DIR}/logs" \
     "${BASE_DIR}/wal-archive" \
-    "${BASE_DIR}/pgbackrest-spool"
+    "${BASE_DIR}/pgbackrest-spool" \
+    "${BASE_DIR}/runtime"
 
 # PMM client stores pmm-agent.yaml
-chmod 755 "${BASE_DIR}/pmm-client"
+chown -R 1002:1002 "${BASE_DIR}/pmm-client"
 
 ###############################################################################
 # Permissions
@@ -112,6 +114,8 @@ chmod 755 "${BASE_DIR}/conf"
 chmod 755 "${BASE_DIR}/initdb"
 chmod 755 "${BASE_DIR}/scripts"
 chmod 755 "${BASE_DIR}/pmm-client"
+
+chmod 700 "${BASE_DIR}/runtime"
 
 find "${BASE_DIR}/conf" -type f -exec chmod 644 {} \; 2>/dev/null || true
 find "${BASE_DIR}/initdb" -type f -exec chmod 644 {} \; 2>/dev/null || true

@@ -6,7 +6,7 @@ set -Eeuo pipefail
 # Configuration
 ###############################################################################
 
-COMPOSE="docker compose"
+COMPOSE="${COMPOSE:-docker compose}"
 
 POSTGRES_CONTAINER="postgres"
 PGBACKREST_CONTAINER="pgbackrest"
@@ -14,6 +14,8 @@ PGBACKREST_CONTAINER="pgbackrest"
 DATA_DIR="./data"
 
 STANZA="main"
+
+PGBACKREST_CONFIG="/var/lib/postgresql/pgbackrest/pgbackrest.conf"
 
 ###############################################################################
 # Colors
@@ -33,14 +35,16 @@ warn() {
     echo -e "${YELLOW}[WARN]${NC} $*"
 }
 
+success() {
+    echo -e "${GREEN}[ OK ]${NC} $*"
+}
+
 error() {
     echo -e "${RED}[ERROR]${NC} $*"
     exit 1
 }
 
-success() {
-    echo -e "${GREEN}[OK]${NC} $*"
-}
+trap 'error "Restore interrupted."' INT TERM
 
 ###############################################################################
 # Helpers
@@ -52,33 +56,36 @@ cat <<EOF
 Usage:
 
 Restore latest backup
-    ./restore.sh
+    ./scripts/restore.sh
 
 Restore to point in time
-    ./restore.sh "2026-07-26 14:30:00"
+    ./scripts/restore.sh "2026-07-26 14:30:00"
 
 Restore to PostgreSQL restore point
-    ./restore.sh restore_point before_upgrade
+    ./scripts/restore.sh restore_point before_upgrade
 
 Restore specific backup
-    ./restore.sh --set 20260726-010001F
+    ./scripts/restore.sh --set 20260726-010001F
 
 Show backup information
-    ./restore.sh --info
+    ./scripts/restore.sh --info
 
 Check repository
-    ./restore.sh --check
+    ./scripts/restore.sh --check
 
 EOF
 exit 0
 }
 
 exec_pgbackrest() {
-    docker exec "${PGBACKREST_CONTAINER}" pgbackrest "$@"
+    docker exec "${PGBACKREST_CONTAINER}" \
+        pgbackrest \
+        --config="${PGBACKREST_CONFIG}" \
+        "$@"
 }
 
 ###############################################################################
-# Options
+# Parse arguments
 ###############################################################################
 
 MODE="latest"
@@ -86,11 +93,12 @@ TARGET=""
 BACKUP_SET=""
 
 case "${1:-}" in
+
     "")
         MODE="latest"
         ;;
 
-    --help|-h)
+    -h|--help)
         usage
         ;;
 
@@ -105,13 +113,15 @@ case "${1:-}" in
         ;;
 
     --set)
-        [ $# -eq 2 ] || error "Usage: restore.sh --set BACKUP_LABEL"
+        [[ $# -eq 2 ]] || error "Usage: restore.sh --set BACKUP_LABEL"
+
         MODE="set"
         BACKUP_SET="$2"
         ;;
 
     restore_point)
-        [ $# -eq 2 ] || error "Usage: restore.sh restore_point NAME"
+        [[ $# -eq 2 ]] || error "Usage: restore.sh restore_point NAME"
+
         MODE="name"
         TARGET="$2"
         ;;
@@ -120,10 +130,11 @@ case "${1:-}" in
         MODE="time"
         TARGET="$1"
         ;;
+
 esac
 
 ###############################################################################
-# Validate
+# Validation
 ###############################################################################
 
 info "Checking pgBackRest container..."
@@ -131,11 +142,14 @@ info "Checking pgBackRest container..."
 docker ps --format '{{.Names}}' | grep -qx "${PGBACKREST_CONTAINER}" \
     || error "Container '${PGBACKREST_CONTAINER}' is not running."
 
-info "Checking repository..."
+[[ -d "${DATA_DIR}" ]] \
+    || error "Data directory '${DATA_DIR}' does not exist."
+
+info "Checking backup repository..."
 
 exec_pgbackrest check
 
-success "Repository OK"
+success "Repository is healthy."
 
 ###############################################################################
 # Stop PostgreSQL
@@ -145,86 +159,129 @@ info "Stopping PostgreSQL..."
 
 ${COMPOSE} stop postgres
 
+info "Waiting for PostgreSQL to stop..."
+
+while docker ps --format '{{.Names}}' | grep -qx "${POSTGRES_CONTAINER}"
+do
+    sleep 1
+done
+
+success "PostgreSQL stopped."
+
 ###############################################################################
 # Confirmation
 ###############################################################################
 
 echo
-warn "The PostgreSQL data directory will be deleted."
-
+warn "ALL DATABASE DATA WILL BE REMOVED."
 echo
-echo "Directory:"
+echo "Data directory:"
 echo "    ${DATA_DIR}"
 echo
 
-read -rp "Continue? (yes/no): " ANSWER
+read -rp 'Type "RESTORE" to continue: ' ANSWER
 
-[[ "$ANSWER" == "yes" ]] || error "Cancelled."
+[[ "${ANSWER}" == "RESTORE" ]] \
+    || error "Cancelled."
 
 ###############################################################################
-# Remove data
+# Remove old data
 ###############################################################################
 
-info "Removing old data..."
+info "Removing old PostgreSQL data..."
 
-rm -rf "${DATA_DIR:?}/"*
+find "${DATA_DIR}" -mindepth 1 -delete
 
 success "Old data removed."
 
 ###############################################################################
-# Restore
+# Build restore command
 ###############################################################################
 
-CMD=(restore --stanza="${STANZA}")
+CMD=(
+    restore
+    --stanza="${STANZA}"
+)
 
 case "${MODE}" in
 
 latest)
+
     info "Restoring latest backup..."
+
     ;;
 
 time)
+
     info "Point-in-Time Recovery"
-    info "Target: ${TARGET}"
+    info "Target : ${TARGET}"
 
     CMD+=(
         --type=time
         --target="${TARGET}"
     )
+
     ;;
 
 name)
+
     info "Restore Point Recovery"
-    info "Restore Point: ${TARGET}"
+    info "Restore Point : ${TARGET}"
 
     CMD+=(
         --type=name
         --target="${TARGET}"
     )
+
     ;;
 
 set)
+
     info "Restore Backup Set"
-    info "Backup: ${BACKUP_SET}"
+    info "Backup : ${BACKUP_SET}"
 
     CMD+=(
         --set="${BACKUP_SET}"
     )
+
     ;;
+
 esac
 
+###############################################################################
+# Execute restore
+###############################################################################
+
 echo
-echo "Executing:"
+info "Executing command:"
 echo
-printf "pgbackrest %q " "${CMD[@]}"
+
+printf "pgbackrest --config=%q " "${PGBACKREST_CONFIG}"
+printf "%q " "${CMD[@]}"
 echo
 echo
 
-docker exec "${PGBACKREST_CONTAINER}" pgbackrest "${CMD[@]}"
+exec_pgbackrest "${CMD[@]}"
 
-success "Restore completed."
+###############################################################################
+# Verify restore
+###############################################################################
 
+info "Verifying restored cluster..."
+
+[[ -f "${DATA_DIR}/PG_VERSION" ]] \
+    || error "Restore verification failed: PG_VERSION not found."
+
+success "Restore verified."
+
+###############################################################################
+# Done
+###############################################################################
+
+echo
+success "Restore completed successfully."
 echo
 echo "Start PostgreSQL with:"
 echo
 echo "    ./scripts/start.sh"
+echo

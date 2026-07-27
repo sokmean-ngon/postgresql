@@ -55,7 +55,7 @@ services:
         max-file: "5"
 
   pgbackrest:
-    image: percona/percona-distribution-postgresql:18.4.1
+    image: percona/percona-distribution-postgresql:18.4
     container_name: pgbackrest
 
     restart: unless-stopped
@@ -80,6 +80,7 @@ services:
       - ./logs:/var/log/postgresql
       - ./wal-archive:/wal_archive
       - ./pgbackrest-spool:/var/lib/pgbackrest/spool
+      - ./runtime:/var/lib/postgresql/pgbackrest
       - ./scripts/pgbackrest-entrypoint.sh:/usr/local/bin/pgbackrest-entrypoint.sh:ro
 
     healthcheck:
