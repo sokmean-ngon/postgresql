@@ -120,13 +120,6 @@ for dir in "${DIRS[@]}"; do
 done
 
 ###############################################################################
-# Create log file
-###############################################################################
-
-install -m 640 /dev/null \
-    "${BASE_DIR}/logs/postgresql.log"
-
-###############################################################################
 # Generate pgBackRest configuration
 ###############################################################################
 
@@ -176,8 +169,6 @@ neutral-umask=y
 pg1-path=/var/lib/postgresql/data
 EOF
 
-chmod 600 "${BASE_DIR}/conf/pgbackrest.conf"
-
 success "Generated conf/pgbackrest.conf"
 
 ###############################################################################
@@ -186,12 +177,11 @@ success "Generated conf/pgbackrest.conf"
 
 info "Setting ownership..."
 
-chown "${POSTGRES_UID}:${POSTGRES_GID}" \
+chown -R "${POSTGRES_UID}:${POSTGRES_GID}" \
     "${BASE_DIR}/data" \
     "${BASE_DIR}/logs" \
     "${BASE_DIR}/wal-archive" \
-    "${BASE_DIR}/pgbackrest-spool" \
-    "${BASE_DIR}/conf/pgbackrest.conf"
+    "${BASE_DIR}/pgbackrest-spool"
 
 # PMM client stores pmm-agent.yaml
 chown -R 1002:1002 "${BASE_DIR}/pmm-client"
@@ -207,17 +197,6 @@ chmod 700 "${BASE_DIR}/wal-archive"
 chmod 700 "${BASE_DIR}/pgbackrest-spool"
 
 chmod 750 "${BASE_DIR}/logs"
-
-chmod 755 "${BASE_DIR}/conf"
-chmod 755 "${BASE_DIR}/initdb"
-chmod 755 "${BASE_DIR}/scripts"
-chmod 755 "${BASE_DIR}/pmm-client"
-
-find "${BASE_DIR}/conf" -type f -exec chmod 644 {} \; 2>/dev/null || true
-find "${BASE_DIR}/initdb" -type f -exec chmod 644 {} \; 2>/dev/null || true
-
-find "${BASE_DIR}/scripts" -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
-chmod 600 "${BASE_DIR}/conf/pgbackrest.conf"
 
 ###############################################################################
 # Summary
@@ -238,7 +217,6 @@ Created:
 ├── data/
 ├── initdb/
 ├── logs/
-│   └── postgresql.log
 ├── pgbackrest-spool/
 ├── pmm-client/
 ├── scripts/
