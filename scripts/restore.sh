@@ -9,13 +9,10 @@ set -Eeuo pipefail
 COMPOSE="${COMPOSE:-docker compose}"
 
 POSTGRES_CONTAINER="postgres"
-PGBACKREST_CONTAINER="pgbackrest"
 
 DATA_DIR="./data"
 
 STANZA="main"
-
-PGBACKREST_CONFIG="/var/lib/postgresql/pgbackrest/pgbackrest.conf"
 
 ###############################################################################
 # Colors
@@ -78,9 +75,8 @@ exit 0
 }
 
 exec_pgbackrest() {
-    docker exec "${PGBACKREST_CONTAINER}" \
+    docker exec "${POSTGRES_CONTAINER}" \
         pgbackrest \
-        --config="${PGBACKREST_CONFIG}" \
         "$@"
 }
 
@@ -139,15 +135,15 @@ esac
 
 info "Checking pgBackRest container..."
 
-docker ps --format '{{.Names}}' | grep -qx "${PGBACKREST_CONTAINER}" \
-    || error "Container '${PGBACKREST_CONTAINER}' is not running."
+docker ps --format '{{.Names}}' | grep -qx "${POSTGRES_CONTAINER}" \
+    || error "Container '${POSTGRES_CONTAINER}' is not running."
 
 [[ -d "${DATA_DIR}" ]] \
     || error "Data directory '${DATA_DIR}' does not exist."
 
 info "Checking backup repository..."
 
-exec_pgbackrest check
+exec_pgbackrest info
 
 success "Repository is healthy."
 
@@ -256,7 +252,7 @@ echo
 info "Executing command:"
 echo
 
-printf "pgbackrest --config=%q " "${PGBACKREST_CONFIG}"
+printf "pgbackrest "
 printf "%q " "${CMD[@]}"
 echo
 echo

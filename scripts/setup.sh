@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 ###############################################################################
-# PostgreSQL Docker Setup
+# Project
 ###############################################################################
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,6 +19,10 @@ GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 BLUE="\033[0;34m"
 NC="\033[0m"
+
+###############################################################################
+# Helper functions
+###############################################################################
 
 info() {
     echo -e "${BLUE}[INFO]${NC} $*"
@@ -38,12 +42,52 @@ error() {
 }
 
 ###############################################################################
+# Load environment
+###############################################################################
+
+ENV_FILE="${BASE_DIR}/.env"
+
+[[ -f "${ENV_FILE}" ]] || error ".env not found."
+
+set -a
+source "${ENV_FILE}"
+set +a
+
+###############################################################################
+# Validate environment
+###############################################################################
+
+required_vars=(
+    S3_BUCKET
+    S3_ENDPOINT
+    S3_REGION
+    S3_ACCESS_KEY
+    S3_SECRET_KEY
+)
+
+for var in "${required_vars[@]}"; do
+    [[ -n "${!var:-}" ]] || error "Missing ${var} in .env"
+done
+
+###############################################################################
 # Check prerequisites
 ###############################################################################
 
 command -v docker >/dev/null 2>&1 || error "Docker is not installed."
 
 docker compose version >/dev/null 2>&1 || error "Docker Compose is not installed."
+
+###############################################################################
+# Check pgBackRest
+###############################################################################
+
+info "Checking pgBackRest..."
+
+docker run --rm "${POSTGRES_IMAGE}" \
+    pgbackrest version >/dev/null \
+    || error "pgBackRest is not installed in ${POSTGRES_IMAGE}"
+
+success "pgBackRest detected."
 
 ###############################################################################
 # Detect postgres UID/GID
@@ -57,7 +101,7 @@ POSTGRES_GID=$(docker run --rm "${POSTGRES_IMAGE}" id -g postgres)
 success "postgres uid=${POSTGRES_UID} gid=${POSTGRES_GID}"
 
 ###############################################################################
-# Directories
+# Create directories
 ###############################################################################
 
 DIRS=(
@@ -69,7 +113,6 @@ DIRS=(
     pgbackrest-spool
     pmm-client
     scripts
-    runtime
 )
 
 for dir in "${DIRS[@]}"; do
@@ -77,10 +120,65 @@ for dir in "${DIRS[@]}"; do
 done
 
 ###############################################################################
-# Log files
+# Create log file
 ###############################################################################
 
-touch "${BASE_DIR}/logs/postgresql.log"
+install -m 640 /dev/null \
+    "${BASE_DIR}/logs/postgresql.log"
+
+###############################################################################
+# Generate pgBackRest configuration
+###############################################################################
+
+info "Generating conf/pgbackrest.conf..."
+
+mkdir -p "${BASE_DIR}/conf"
+
+cat >"${BASE_DIR}/conf/pgbackrest.conf" <<EOF
+[global]
+repo1-type=s3
+repo1-path=/backup
+
+repo1-s3-bucket=${S3_BUCKET}
+repo1-s3-endpoint=${S3_ENDPOINT}
+repo1-s3-region=${S3_REGION}
+repo1-s3-uri-style=path
+
+repo1-s3-key=${S3_ACCESS_KEY}
+repo1-s3-key-secret=${S3_SECRET_KEY}
+
+repo1-s3-verify-tls=${S3_VERIFY_TLS:-y}
+
+repo1-retention-full=${PGBACKREST_RETENTION_FULL:-14}
+repo1-retention-archive=${PGBACKREST_RETENTION_ARCHIVE:-14}
+
+process-max=${PGBACKREST_PROCESS_MAX:-2}
+
+repo1-bundle=y
+repo1-block=y
+
+compress-type=zst
+compress-level=${PGBACKREST_COMPRESS_LEVEL:-3}
+
+start-fast=y
+
+archive-async=y
+spool-path=/var/lib/pgbackrest/spool
+
+log-level-console=info
+log-level-file=detail
+log-path=/var/log/postgresql
+
+delta=y
+neutral-umask=y
+
+[main]
+pg1-path=/var/lib/postgresql/data
+EOF
+
+chmod 600 "${BASE_DIR}/conf/pgbackrest.conf"
+
+success "Generated conf/pgbackrest.conf"
 
 ###############################################################################
 # Ownership
@@ -88,12 +186,12 @@ touch "${BASE_DIR}/logs/postgresql.log"
 
 info "Setting ownership..."
 
-chown -R "${POSTGRES_UID}:${POSTGRES_GID}" \
+chown "${POSTGRES_UID}:${POSTGRES_GID}" \
     "${BASE_DIR}/data" \
     "${BASE_DIR}/logs" \
     "${BASE_DIR}/wal-archive" \
     "${BASE_DIR}/pgbackrest-spool" \
-    "${BASE_DIR}/runtime"
+    "${BASE_DIR}/conf/pgbackrest.conf"
 
 # PMM client stores pmm-agent.yaml
 chown -R 1002:1002 "${BASE_DIR}/pmm-client"
@@ -115,12 +213,11 @@ chmod 755 "${BASE_DIR}/initdb"
 chmod 755 "${BASE_DIR}/scripts"
 chmod 755 "${BASE_DIR}/pmm-client"
 
-chmod 700 "${BASE_DIR}/runtime"
-
 find "${BASE_DIR}/conf" -type f -exec chmod 644 {} \; 2>/dev/null || true
 find "${BASE_DIR}/initdb" -type f -exec chmod 644 {} \; 2>/dev/null || true
 
 find "${BASE_DIR}/scripts" -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+chmod 600 "${BASE_DIR}/conf/pgbackrest.conf"
 
 ###############################################################################
 # Summary
@@ -152,19 +249,15 @@ PostgreSQL GID : ${POSTGRES_GID}
 
 Next steps:
 
-1. Copy:
-   - docker-compose.yml
-   - .env
-   - conf/*
-   - initdb/*
-   - scripts/*
-
-2. Start PostgreSQL
+1. Review .env
+2. Review conf/postgresql.conf
+3. Start PostgreSQL
 
    docker compose up -d
 
-3. Verify
+4. Verify
 
    docker compose ps
 
 EOF
+

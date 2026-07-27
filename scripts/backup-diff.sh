@@ -1,9 +1,8 @@
 #!/bin/bash
 set -e
 
-docker exec pgbackrest \
+docker exec postgres \
     pgbackrest \
-    --config=/var/lib/postgresql/pgbackrest/pgbackrest.conf \
     --stanza=main \
     backup \
     --type=diff

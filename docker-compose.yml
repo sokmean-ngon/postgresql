@@ -4,6 +4,8 @@ services:
     container_name: postgres
     hostname: postgres
 
+    init: true
+
     restart: unless-stopped
     stop_grace_period: 5m
     shm_size: 8gb
@@ -11,14 +13,8 @@ services:
     ports:
       - "5432:5432"
 
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: postgres
-      PGDATA: /var/lib/postgresql/data
-      LANG: en_US.UTF-8
-      LC_ALL: en_US.UTF-8
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+    env_file:
+      - .env
 
     command:
       - postgres
@@ -26,7 +22,11 @@ services:
       - config_file=/etc/postgresql/postgresql.conf
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U $POSTGRES_USER -d postgres -tAc 'SELECT 1' >/dev/null || exit 1"
+        ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -38,58 +38,13 @@ services:
         hard: 65536
 
     volumes:
-      - ./data:/var/lib/postgresql/data:rw
-      - ./initdb:/docker-entrypoint-initdb.d:ro
-      - ./conf:/etc/postgresql:ro
-      - ./logs:/var/log/postgresql:rw
-      - ./wal-archive:/wal_archive:rw
-      - ./pgbackrest-spool:/var/lib/pgbackrest/spool:rw
-
-    networks:
-      - postgres-network
-
-    logging:
-      driver: json-file
-      options:
-        max-size: "100m"
-        max-file: "5"
-
-  pgbackrest:
-    image: percona/percona-distribution-postgresql:18.4
-    container_name: pgbackrest
-
-    restart: unless-stopped
-
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-    entrypoint:
-      - /bin/bash
-      - /usr/local/bin/pgbackrest-entrypoint.sh
-
-    command:
-      - sleep
-      - infinity
-
-    env_file:
-      - .env
-
-    volumes:
-      - ./data:/var/lib/postgresql/data:rw
+      - ./conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./conf/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./conf/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ./data:/var/lib/postgresql/data
       - ./logs:/var/log/postgresql
       - ./wal-archive:/wal_archive
       - ./pgbackrest-spool:/var/lib/pgbackrest/spool
-      - ./runtime:/var/lib/postgresql/pgbackrest
-      - ./scripts/pgbackrest-entrypoint.sh:/usr/local/bin/pgbackrest-entrypoint.sh:ro
-
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - pgbackrest --stanza=main check >/dev/null 2>&1 || exit 1
-      interval: 60s
-      timeout: 15s
-      retries: 3
 
     networks:
       - postgres-network
@@ -99,6 +54,9 @@ services:
       options:
         max-size: "100m"
         max-file: "5"
+
+    tmpfs:
+      - /tmp
 
   pmm-client:
     image: percona/pmm-client:3.8.1
