@@ -58,6 +58,7 @@ set +a
 ###############################################################################
 
 required_vars=(
+    REPO1_PATH
     S3_BUCKET
     S3_ENDPOINT
     S3_REGION
@@ -130,7 +131,7 @@ mkdir -p "${BASE_DIR}/conf"
 cat >"${BASE_DIR}/conf/pgbackrest.conf" <<EOF
 [global]
 repo1-type=s3
-repo1-path=/backup
+repo1-path=${REPO1_PATH}
 
 repo1-s3-bucket=${S3_BUCKET}
 repo1-s3-endpoint=${S3_ENDPOINT}
@@ -169,7 +170,7 @@ neutral-umask=y
 pg1-path=/var/lib/postgresql/data
 EOF
 
-success "Generated conf/pgbackrest/pgbackrest.conf"
+success "Generated conf/pgbackrest.conf"
 
 ###############################################################################
 # Ownership
