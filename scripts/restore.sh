@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
@@ -9,12 +8,12 @@ set -Eeuo pipefail
 
 COMPOSE="${COMPOSE:-docker compose}"
 
-POSTGRES_SERVICE="${POSTGRES_SERVICE:-postgres}"
-POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-postgres}"
+SERVICE="postgres"
+CONTAINER="postgres"
 
-DATA_DIR="${DATA_DIR:-./data}"
+DATA_DIR="./data"
 
-STANZA="${STANZA:-main}"
+STANZA="main"
 
 ###############################################################################
 # Colors
@@ -50,6 +49,7 @@ trap 'error "Restore interrupted."' INT TERM
 ###############################################################################
 
 usage() {
+
 cat <<EOF
 
 Usage:
@@ -60,25 +60,28 @@ Restore latest backup
 Restore to point in time
     ./scripts/restore.sh "2026-07-26 14:30:00"
 
-Restore to PostgreSQL restore point
+Restore to named restore point
     ./scripts/restore.sh restore_point before_upgrade
 
-Restore specific backup
+Restore a specific backup set
     ./scripts/restore.sh --set 20260726-010001F
 
-Show backup information
+Show repository information
     ./scripts/restore.sh --info
 
 Check repository
     ./scripts/restore.sh --check
 
 EOF
+
 exit 0
 }
 
 exec_pgbackrest() {
-    ${COMPOSE} run --rm --no-deps \
-        "${POSTGRES_SERVICE}" \
+
+    ${COMPOSE} run --rm \
+        --no-deps \
+        "${SERVICE}" \
         pgbackrest "$@"
 }
 
@@ -110,18 +113,23 @@ case "${1:-}" in
         ;;
 
     --set)
-        [[ $# -eq 2 ]] || error "Usage: restore.sh --set BACKUP_SET"
+
+        [[ $# -eq 2 ]] || error "Usage: restore.sh --set BACKUP_LABEL"
+
         MODE="set"
         BACKUP_SET="$2"
         ;;
 
     restore_point)
+
         [[ $# -eq 2 ]] || error "Usage: restore.sh restore_point NAME"
+
         MODE="name"
         TARGET="$2"
         ;;
 
     *)
+
         MODE="time"
         TARGET="$1"
         ;;
@@ -134,8 +142,8 @@ esac
 
 info "Checking Docker container..."
 
-docker ps -a --format '{{.Names}}' | grep -qx "${POSTGRES_CONTAINER}" \
-    || error "Container '${POSTGRES_CONTAINER}' not found."
+docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER}" \
+    || error "Container '${CONTAINER}' does not exist."
 
 [[ -d "${DATA_DIR}" ]] \
     || error "Data directory '${DATA_DIR}' does not exist."
@@ -144,22 +152,7 @@ info "Checking backup repository..."
 
 exec_pgbackrest info >/dev/null
 
-success "Backup repository is accessible."
-
-###############################################################################
-# Confirmation
-###############################################################################
-
-echo
-warn "THIS OPERATION WILL DESTROY THE CURRENT DATABASE."
-echo
-echo "Data directory:"
-echo "    ${DATA_DIR}"
-echo
-
-read -rp 'Type "RESTORE" to continue: ' ANSWER
-
-[[ "${ANSWER}" == "RESTORE" ]] || error "Restore cancelled."
+success "Repository is healthy."
 
 ###############################################################################
 # Stop PostgreSQL
@@ -167,15 +160,31 @@ read -rp 'Type "RESTORE" to continue: ' ANSWER
 
 info "Stopping PostgreSQL..."
 
-${COMPOSE} stop "${POSTGRES_SERVICE}"
+${COMPOSE} stop "${SERVICE}"
 
 success "PostgreSQL stopped."
 
 ###############################################################################
-# Remove existing cluster
+# Confirmation
 ###############################################################################
 
-info "Removing existing PostgreSQL data..."
+echo
+warn "ALL DATABASE DATA WILL BE REMOVED."
+echo
+echo "Data directory:"
+echo "    ${DATA_DIR}"
+echo
+
+read -rp 'Type "RESTORE" to continue: ' ANSWER
+
+[[ "${ANSWER}" == "RESTORE" ]] \
+    || error "Restore cancelled."
+
+###############################################################################
+# Remove old data
+###############################################################################
+
+info "Removing PostgreSQL data..."
 
 find "${DATA_DIR}" -mindepth 1 -delete
 
@@ -208,27 +217,30 @@ time)
         --type=time
         --target="${TARGET}"
     )
+
     ;;
 
 name)
 
-    info "Restore Point Recovery"
-    info "Restore Point: ${TARGET}"
+    info "Restore point recovery"
+    info "Restore point: ${TARGET}"
 
     CMD+=(
         --type=name
         --target="${TARGET}"
     )
+
     ;;
 
 set)
 
-    info "Backup Set Recovery"
-    info "Backup Set: ${BACKUP_SET}"
+    info "Restore backup set"
+    info "Backup: ${BACKUP_SET}"
 
     CMD+=(
         --set="${BACKUP_SET}"
     )
+
     ;;
 
 esac
@@ -263,10 +275,10 @@ info "Verifying restored cluster..."
 [[ -d "${DATA_DIR}/global" ]] \
     || error "global directory not found."
 
-success "Restore verified."
+success "Restore verification passed."
 
 ###############################################################################
-# Finished
+# Done
 ###############################################################################
 
 echo
@@ -276,4 +288,3 @@ echo "Start PostgreSQL:"
 echo
 echo "    ./scripts/start.sh"
 echo
-```
