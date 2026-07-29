@@ -42,6 +42,7 @@ services:
       - ./conf/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./conf/pgbackrest.conf:/etc/postgresql/pgbackrest.conf:ro
       - ./data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
       - ./logs:/var/log/postgresql
       - ./wal-archive:/wal_archive
       - ./pgbackrest-spool:/var/lib/pgbackrest/spool
@@ -61,7 +62,7 @@ services:
   pmm-client:
     image: percona/pmm-client:3.8.1
     container_name: pmm-client
-    hostname: postgres-node
+    hostname: ${PMM_NODE_NAME}
 
     restart: unless-stopped
 
@@ -74,9 +75,9 @@ services:
       - PMM_AGENT_SERVER_ADDRESS=${PMM_SERVER_IP}
       - PMM_AGENT_SERVER_USERNAME=${PMM_SERVER_USER}
       - PMM_AGENT_SERVER_PASSWORD=${PMM_SERVER_PASSWORD}
-      - PMM_AGENT_SERVER_INSECURE_TLS=1
-      - PMM_AGENT_SETUP=1
-      - PMM_AGENT_CONFIG_FILE=/srv/pmm-agent.yaml
+      - PMM_AGENT_SERVER_INSECURE_TLS=${PMM_AGENT_SERVER_INSECURE_TLS}
+      - PMM_AGENT_SETUP=${PMM_AGENT_SETUP}
+      - PMM_AGENT_CONFIG_FILE=${PMM_AGENT_CONFIG_FILE}
 
     volumes:
       - /:/host:ro
