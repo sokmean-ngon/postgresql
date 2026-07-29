@@ -40,7 +40,7 @@ services:
     volumes:
       - ./conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - ./conf/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-      - ./conf/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ./conf/pgbackrest.conf:/etc/postgresql/pgbackrest.conf:ro
       - ./data:/var/lib/postgresql/data
       - ./logs:/var/log/postgresql
       - ./wal-archive:/wal_archive

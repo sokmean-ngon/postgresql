@@ -169,7 +169,7 @@ neutral-umask=y
 pg1-path=/var/lib/postgresql/data
 EOF
 
-success "Generated conf/pgbackrest.conf"
+success "Generated conf/pgbackrest/pgbackrest.conf"
 
 ###############################################################################
 # Ownership
@@ -214,6 +214,7 @@ ${BASE_DIR}
 Created:
 
 ├── conf/
+|   └── pgbackrest/
 ├── data/
 ├── initdb/
 ├── logs/
