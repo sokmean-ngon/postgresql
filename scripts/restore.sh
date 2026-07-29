@@ -143,10 +143,10 @@ esac
 info "Checking Docker container..."
 
 docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER}" \
-    || error "Container '${CONTAINER}' does not exist."
+    || info "Container '${CONTAINER}' does not exist."
 
 [[ -d "${DATA_DIR}" ]] \
-    || error "Data directory '${DATA_DIR}' does not exist."
+    || info "Data directory '${DATA_DIR}' does not exist."
 
 info "Checking backup repository..."
 
@@ -197,8 +197,6 @@ success "Old data removed."
 CMD=(
     restore
     --stanza="${STANZA}"
-    --target-action=promote
-    --target-timeline=latest
 )
 
 case "${MODE}" in
@@ -216,6 +214,8 @@ time)
     CMD+=(
         --type=time
         --target="${TARGET}"
+        --target-action=promote
+        --target-timeline=latest
     )
 
     ;;
@@ -228,6 +228,8 @@ name)
     CMD+=(
         --type=name
         --target="${TARGET}"
+        --target-action=promote
+        --target-timeline=latest
     )
 
     ;;
