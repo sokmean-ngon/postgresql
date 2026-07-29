@@ -1,3 +1,4 @@
+```bash
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
@@ -8,11 +9,12 @@ set -Eeuo pipefail
 
 COMPOSE="${COMPOSE:-docker compose}"
 
-POSTGRES_CONTAINER="postgres"
+POSTGRES_SERVICE="${POSTGRES_SERVICE:-postgres}"
+POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-postgres}"
 
-DATA_DIR="./data"
+DATA_DIR="${DATA_DIR:-./data}"
 
-STANZA="main"
+STANZA="${STANZA:-main}"
 
 ###############################################################################
 # Colors
@@ -75,9 +77,9 @@ exit 0
 }
 
 exec_pgbackrest() {
-    docker exec "${POSTGRES_CONTAINER}" \
-        pgbackrest \
-        "$@"
+    ${COMPOSE} run --rm --no-deps \
+        "${POSTGRES_SERVICE}" \
+        pgbackrest "$@"
 }
 
 ###############################################################################
@@ -91,7 +93,6 @@ BACKUP_SET=""
 case "${1:-}" in
 
     "")
-        MODE="latest"
         ;;
 
     -h|--help)
@@ -109,15 +110,13 @@ case "${1:-}" in
         ;;
 
     --set)
-        [[ $# -eq 2 ]] || error "Usage: restore.sh --set BACKUP_LABEL"
-
+        [[ $# -eq 2 ]] || error "Usage: restore.sh --set BACKUP_SET"
         MODE="set"
         BACKUP_SET="$2"
         ;;
 
     restore_point)
         [[ $# -eq 2 ]] || error "Usage: restore.sh restore_point NAME"
-
         MODE="name"
         TARGET="$2"
         ;;
@@ -133,43 +132,26 @@ esac
 # Validation
 ###############################################################################
 
-info "Checking pgBackRest container..."
+info "Checking Docker container..."
 
-docker ps --format '{{.Names}}' | grep -qx "${POSTGRES_CONTAINER}" \
-    || error "Container '${POSTGRES_CONTAINER}' is not running."
+docker ps -a --format '{{.Names}}' | grep -qx "${POSTGRES_CONTAINER}" \
+    || error "Container '${POSTGRES_CONTAINER}' not found."
 
 [[ -d "${DATA_DIR}" ]] \
     || error "Data directory '${DATA_DIR}' does not exist."
 
 info "Checking backup repository..."
 
-exec_pgbackrest info
+exec_pgbackrest info >/dev/null
 
-success "Repository is healthy."
-
-###############################################################################
-# Stop PostgreSQL
-###############################################################################
-
-info "Stopping PostgreSQL..."
-
-${COMPOSE} stop postgres
-
-info "Waiting for PostgreSQL to stop..."
-
-while docker ps --format '{{.Names}}' | grep -qx "${POSTGRES_CONTAINER}"
-do
-    sleep 1
-done
-
-success "PostgreSQL stopped."
+success "Backup repository is accessible."
 
 ###############################################################################
 # Confirmation
 ###############################################################################
 
 echo
-warn "ALL DATABASE DATA WILL BE REMOVED."
+warn "THIS OPERATION WILL DESTROY THE CURRENT DATABASE."
 echo
 echo "Data directory:"
 echo "    ${DATA_DIR}"
@@ -177,14 +159,23 @@ echo
 
 read -rp 'Type "RESTORE" to continue: ' ANSWER
 
-[[ "${ANSWER}" == "RESTORE" ]] \
-    || error "Cancelled."
+[[ "${ANSWER}" == "RESTORE" ]] || error "Restore cancelled."
 
 ###############################################################################
-# Remove old data
+# Stop PostgreSQL
 ###############################################################################
 
-info "Removing old PostgreSQL data..."
+info "Stopping PostgreSQL..."
+
+${COMPOSE} stop "${POSTGRES_SERVICE}"
+
+success "PostgreSQL stopped."
+
+###############################################################################
+# Remove existing cluster
+###############################################################################
+
+info "Removing existing PostgreSQL data..."
 
 find "${DATA_DIR}" -mindepth 1 -delete
 
@@ -197,6 +188,8 @@ success "Old data removed."
 CMD=(
     restore
     --stanza="${STANZA}"
+    --target-action=promote
+    --target-timeline=latest
 )
 
 case "${MODE}" in
@@ -204,42 +197,38 @@ case "${MODE}" in
 latest)
 
     info "Restoring latest backup..."
-
     ;;
 
 time)
 
     info "Point-in-Time Recovery"
-    info "Target : ${TARGET}"
+    info "Target: ${TARGET}"
 
     CMD+=(
         --type=time
         --target="${TARGET}"
     )
-
     ;;
 
 name)
 
     info "Restore Point Recovery"
-    info "Restore Point : ${TARGET}"
+    info "Restore Point: ${TARGET}"
 
     CMD+=(
         --type=name
         --target="${TARGET}"
     )
-
     ;;
 
 set)
 
-    info "Restore Backup Set"
-    info "Backup : ${BACKUP_SET}"
+    info "Backup Set Recovery"
+    info "Backup Set: ${BACKUP_SET}"
 
     CMD+=(
         --set="${BACKUP_SET}"
     )
-
     ;;
 
 esac
@@ -249,7 +238,7 @@ esac
 ###############################################################################
 
 echo
-info "Executing command:"
+info "Executing:"
 echo
 
 printf "pgbackrest "
@@ -266,18 +255,25 @@ exec_pgbackrest "${CMD[@]}"
 info "Verifying restored cluster..."
 
 [[ -f "${DATA_DIR}/PG_VERSION" ]] \
-    || error "Restore verification failed: PG_VERSION not found."
+    || error "PG_VERSION not found."
+
+[[ -d "${DATA_DIR}/base" ]] \
+    || error "base directory not found."
+
+[[ -d "${DATA_DIR}/global" ]] \
+    || error "global directory not found."
 
 success "Restore verified."
 
 ###############################################################################
-# Done
+# Finished
 ###############################################################################
 
 echo
 success "Restore completed successfully."
 echo
-echo "Start PostgreSQL with:"
+echo "Start PostgreSQL:"
 echo
 echo "    ./scripts/start.sh"
 echo
+```
