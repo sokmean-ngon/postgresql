@@ -285,7 +285,7 @@ kernel.shmall = 4194304
 * A system reboot is **not required** after running `sysctl --system`.
 
 ---
-# Backup & Restore
+# Backup
 
 ## Automatic Backup Schedule
 
@@ -321,167 +321,338 @@ Example:
 ```
 
 ---
-# Manual Restore
+# PostgreSQL Restore Guide
 
-Restores are intentionally **manual** to prevent accidental data loss.
+This document explains how to use the PostgreSQL restore scripts based on **pgBackRest** and **Docker Compose**.
 
-## Show Available Backups
+## Prerequisites
+
+Before performing a restore, ensure:
+
+* Docker and Docker Compose are installed.
+* PostgreSQL container is configured correctly.
+* `pgbackrest.conf` points to the correct backup repository.
+* The repository contains a valid stanza and backups.
+* The PostgreSQL container is named `postgres`.
+
+
+## Restore Workflow
+
+The recommended restore workflow is:
+
+```text
+restore-info.sh
+        │
+        ▼
+restore-precheck.sh
+        │
+        ▼
+Choose Restore Method
+        │
+        ├── restore-latest.sh
+        ├── restore-time.sh
+        ├── restore-point.sh
+        └── restore-set.sh
+        │
+        ▼
+restore-verify.sh
+        │
+        ▼
+docker compose up -d postgres
+```
+
+
+## Script Overview
+
+| Script                | Description                                                               |
+| --------------------- | ------------------------------------------------------------------------- |
+| `restore-info.sh`     | Display repository information and available backups.                     |
+| `restore-precheck.sh` | Validate repository health before restoring.                              |
+| `restore-latest.sh`   | Restore the latest backup.                                                |
+| `restore-time.sh`     | Restore to a specific timestamp (Point-in-Time Recovery).                 |
+| `restore-point.sh`    | Restore to a named restore point.                                         |
+| `restore-set.sh`      | Restore a specific backup set.                                            |
+| `restore-verify.sh`   | Verify the restored PostgreSQL data directory before starting PostgreSQL. |
+
+
+
+## 1. View Available Backups
+
+Display repository information.
 
 ```bash
-./scripts/restore.sh --info
+./scripts/restore-info.sh
 ```
 
-Example output:
+Example:
 
-```
+```text
 stanza: main
-    status: ok
 
-    full backup: 20260720-010001F
-    diff backup: 20260724-010001D
+status: ok
+
+full backup:
+    20260729-010001F
+
+diff backup:
+    20260730-010001D
+
+wal archive:
+    min/max ...
 ```
 
-## Verify Backup Repository
+Use this command whenever you need to know which backup sets are available.
+
+
+## 2. Verify Repository
+
+Verify the repository before restoring.
 
 ```bash
-./scripts/restore.sh --check
+./scripts/restore-precheck.sh
 ```
 
-## Restore Latest Backup
+This command checks:
 
-Stop PostgreSQL:
+* Repository connectivity
+* Repository configuration
+* Archive accessibility
+* Stanza validity
+
+If this command reports an error, do **not** continue with the restore until the issue has been resolved.
+
+
+## 3. Restore the Latest Backup
+
+Restore the newest backup available.
 
 ```bash
-docker compose stop postgres
+./scripts/restore-latest.sh
 ```
 
-Restore:
+The script automatically:
+
+1. Stops PostgreSQL.
+2. Confirms deletion of the existing data directory.
+3. Removes the old database files.
+4. Restores the latest backup.
+
+Use this option for disaster recovery when the latest backup should be restored.
+
+
+## 4. Restore to a Specific Time
+
+Restore using Point-in-Time Recovery (PITR).
 
 ```bash
-./scripts/restore.sh
+./scripts/restore-time.sh "2026-07-29 14:30:00"
 ```
 
-Start PostgreSQL:
+Example:
 
 ```bash
-./scripts/start.sh
+./scripts/restore-time.sh "2026-07-29 18:15:00"
 ```
 
-## Point-in-Time Recovery (PITR)
+This restores the database to the specified timestamp using archived WAL files.
 
-Restore to a specific timestamp:
+Use this option when:
 
-```bash
-docker compose stop postgres
+* Recovering from accidental DELETE or UPDATE operations.
+* Recovering before application deployment.
+* Recovering before data corruption.
 
-./scripts/restore.sh "2026-07-26 14:30:00"
 
-./scripts/start.sh
-```
+## 5. Restore to a Named Restore Point
 
-## Restore to a PostgreSQL Restore Point
+Restore to a previously created restore point.
 
-Create a restore point before making significant changes:
+Example:
 
 ```sql
 SELECT pg_create_restore_point('before_upgrade');
 ```
 
-Restore to that point:
+Restore:
 
 ```bash
-docker compose stop postgres
-
-./scripts/restore.sh restore_point before_upgrade
-
-./scripts/start.sh
+./scripts/restore-point.sh before_upgrade
 ```
 
-## Restore a Specific Backup Set
+Use this method before:
 
-List available backups:
+* Major upgrades
+* Data migrations
+* Schema changes
+* Application deployments
+
+
+## 6. Restore a Specific Backup Set
+
+Restore an exact backup set.
+
+Example:
 
 ```bash
-./scripts/restore.sh --info
+./scripts/restore-set.sh 20260729-010001F
 ```
 
-Restore a specific backup:
+The backup set identifier can be obtained from:
 
 ```bash
-docker compose stop postgres
-
-./scripts/restore.sh --set 20260720-010001F
-
-./scripts/start.sh
+./scripts/restore-info.sh
 ```
 
-## Restore Workflow
+This option is useful when multiple full backups exist and a specific backup must be restored.
 
-```
-┌─────────────────────────────┐
-│ Stop PostgreSQL             │
-└──────────────┬──────────────┘
-               │
-               ▼
-┌─────────────────────────────┐
-│ Verify Backup Repository    │
-└──────────────┬──────────────┘
-               │
-               ▼
-┌─────────────────────────────┐
-│ Delete Existing Data        │
-└──────────────┬──────────────┘
-               │
-               ▼
-┌─────────────────────────────┐
-│ Restore with pgBackRest     │
-└──────────────┬──────────────┘
-               │
-               ▼
-┌─────────────────────────────┐
-│ Start PostgreSQL            │
-└──────────────┬──────────────┘
-               │
-               ▼
-┌─────────────────────────────┐
-│ Verify Database             │
-└─────────────────────────────┘
-```
 
-## Verification
+## 7. Verify the Restored Database
 
-Check PostgreSQL status:
+After a restore completes, verify the restored data directory.
 
 ```bash
-docker exec postgres pg_isready
+./scripts/restore-verify.sh
 ```
 
-Verify recovery status:
+Typical output:
+
+```text
+✓ PG_VERSION
+✓ backup_label
+✓ recovery.signal
+✓ postgresql.auto.conf
+✓ pg_wal
+✓ Repository reachable
+
+Restore verification PASSED
+```
+
+If any required file is missing, the script reports the failure before PostgreSQL is started.
+
+
+## Start PostgreSQL
+
+Once verification succeeds:
 
 ```bash
-docker exec postgres psql -U postgres -c "SELECT pg_is_in_recovery();"
+docker compose up -d postgres
 ```
 
-Display server version:
+Monitor the logs:
 
 ```bash
-docker exec postgres psql -U postgres -c "SELECT version();"
+docker compose logs -f postgres
 ```
 
-Display current timestamp:
+Wait until PostgreSQL reports:
+
+```text
+database system is ready to accept connections
+```
+
+
+## Typical Recovery Scenarios
+
+### Restore After Hardware Failure
 
 ```bash
-docker exec postgres psql -U postgres -c "SELECT now();"
+./scripts/restore-info.sh
+./scripts/restore-precheck.sh
+./scripts/restore-latest.sh
+./scripts/restore-verify.sh
+docker compose up -d postgres
 ```
 
-## Important Notes
 
-- Always stop PostgreSQL before restoring.
-- The restore process deletes the existing PostgreSQL data directory before restoring from backup.
-- `restore.sh` never starts PostgreSQL automatically.
-- Always run `start.sh` after a successful restore.
-- Ensure WAL archiving is functioning correctly to enable Point-in-Time Recovery (PITR).
-- Test your backup and restore procedures regularly to verify disaster recovery readiness.
+### Recover Deleted Data
+
+```bash
+./scripts/restore-info.sh
+./scripts/restore-precheck.sh
+./scripts/restore-time.sh "2026-07-29 15:30:00"
+./scripts/restore-verify.sh
+docker compose up -d postgres
+```
+
+
+### Recover Before Application Upgrade
+
+```bash
+./scripts/restore-point.sh before_upgrade
+./scripts/restore-verify.sh
+docker compose up -d postgres
+```
+
+
+### Restore a Historical Backup
+
+```bash
+./scripts/restore-info.sh
+./scripts/restore-set.sh 20260721-010001F
+./scripts/restore-verify.sh
+docker compose up -d postgres
+```
+
+
+## Best Practices
+
+* Always execute `restore-precheck.sh` before restoring.
+* Always execute `restore-verify.sh` before starting PostgreSQL.
+* Do not modify `pgbackrest.conf` or `repo1-path` during recovery.
+* Ensure the repository configuration used during restore matches the configuration used to create the backup.
+* Verify that archived WAL files are available when performing Point-in-Time Recovery.
+* Monitor PostgreSQL logs after startup to confirm recovery completes successfully.
+* Perform periodic test restores to validate backup integrity.
+
+
+## Complete Restore Lifecycle
+
+```text
+1. Inspect available backups
+
+    ./scripts/restore-info.sh
+
+            │
+
+2. Validate repository
+
+    ./scripts/restore-precheck.sh
+
+            │
+
+3. Perform restore
+
+    Latest Backup
+        ./scripts/restore-latest.sh
+
+    Point-in-Time
+        ./scripts/restore-time.sh "YYYY-MM-DD HH:MM:SS"
+
+    Restore Point
+        ./scripts/restore-point.sh before_upgrade
+
+    Backup Set
+        ./scripts/restore-set.sh BACKUP_SET
+
+            │
+
+4. Verify restored cluster
+
+    ./scripts/restore-verify.sh
+
+            │
+
+5. Start PostgreSQL
+
+    docker compose up -d postgres
+
+            │
+
+6. Verify PostgreSQL startup
+
+    docker compose logs -f postgres
+```
+
 
 ---
 # Percona Monitoring and Management (PMM)
